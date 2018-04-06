@@ -29,7 +29,7 @@ basement and like my gear neat and clean.
 | CPU | 1 | Intel Xeon E3-1240L v5 4x2.1 GHz 25W TDP |
 | Heatsink | 1 |  Supermicro CPU Cooling SMH SNK-P0046P |
 | Risercard | 1 |  Supermicro Spare 8x PCI-e 1U Riser Card |
-| M2. Controller | 1 |  Supermicro 2-Port NVme HBA AOC-SLG3-2M2-O |
+| M.2 Controller | 1 |  Supermicro 2-Port NVme HBA AOC-SLG3-2M2-O |
 | RAM | 1 | Kingston ValueRAM DIMM 32 GB DDR4-2133 Kit ECC |
 | SSD | 2 | Intel 545s 128 GB |
 | NVMe | 2 | Corsair Force MP500 120 GB |
@@ -44,7 +44,23 @@ network is connected. If you are wondering on how to connect the drive
 backplane to the mainboard, you need to get two Mini-SAS fan-out (SAS to SATA)
 cables - they feature a (double) Mini-SAS connector on the one side and four
 regular SATA connectors on the other side. They may come with a side-cable,
-which you can happily ignore as the mainboard doesn't feature that.
+which you can happily ignore as the mainboard doesn't feature that. Mind that
+you need a "reverse" cable (check the "target" and "host" variants of the cable),
+the one that says the SAS connector goes to the drives is correct.
+Don't buy a cheap cable, I had two that did not work at all for me...
+
+### The ugly parts
+The Supermicro M.2 board (AOC-SLG3-2M2-O) needs to be installed in the PCI-e
+Slot 5 on this particular board. You have to enable bifurcation (8x -> 4x4)
+such that both cards are detected. If you don't set this in the BIOS
+(hidden under Chipset Configuration) you will only see one of the M.2 cards,
+as only the lower port gets a 4x connection. Only Slot 5 can be bifurcated
+on the X11SSH-LN4F.
+
+The problem is that Slot5 doesn't really fit, in the sense that the backmounting
+plate of the M.2 board, is misaligned with the case. I ended up disassembling
+the backplate from the board, mounting the blind-backplate on the case and
+strapping the card with cable-ties in place onto the blind.
 
 
 ## Operating System
@@ -84,6 +100,15 @@ absence of a cheaper equally-fast drive, I just don't care too much about it.
 I will encrypt everything on ZFS, as I can afford the performance tradeoff and
 appreciate the extra level of security.
 
+## IPMI settings
+  * Start the server and logon to IPMI
+  * Change admin password
+  * Enable NTP syncronisation for hardware clock
+
+## BIOS settings
+  * Set PCI-e bifurcation to 4x4 on SLOT5 for the two M.2 cards to be detected
+  * Set Hardware Type on SATA settings to SSD where appropriate
+
 ## Base Install
 Download FreeBSD 11.1 from:  [download.freebsd.org](https://download.freebsd.org/ftp/releases/ISO-IMAGES/11.1/FreeBSD-11.1-RELEASE-amd64-memstick.img) and copy it to a thumb drive to boot from.
 
@@ -122,3 +147,52 @@ Get a cup of coffee, there will be a lot of compiling and waiting in the next
 chapter ;-)
 
 ## Base configuration
+  * Setup networking, add the following to `/etc/rc.conf`
+
+        # Network
+        ifconfig_igb0="up mtu 9000 DHCP" # Maintenance
+        ifconfig_igb1="up mtu 9000 DHCP" # Storage Blue
+        ifconfig_igb2="up mtu 9000 DHCP" # Storage Green
+        ifconfig_igb3="up mtu 1500 DHCP" # VMs
+
+  * Reboot and copy ssh key, we will continue remote from here.
+  * Update ports: `portsnap fetch && portsnap extract` and `portsnap fetch update`
+  * Install portmaster: `cd /usr/ports/ports-mgmt/portmaster && make config-recursive && make install clean`
+  * Install sudo: `portmaster security/sudo`
+  * Add group wheel as sudoers in `/usr/local/etc/sudoers`.
+  * Install NSS CA Certs: `sudo portmaster security/ca_root_nss`
+  * Install zsh: `sudo portmaster shells/zsh`
+  * Set zsh: `sudo chsh <username>` put `/usr/local/bin/zsh` as shell
+  * Copy your .zshrc file to `~/.zshrc`
+  * Install vim: `sudo portmaster editors/vim-tiny`
+  * Arrow key fix in vimrc: `sudo echo set nocompatible > ~/.vimrc`
+  * Install htop: `sudo portmaster sysutils/htop`
+  * Set `PermitRootLogin no` in `/etc/ssh/sshd_config`
+  * Set ntp servers in `/etc/ntp.conf`
+  * Update ntp leapsecond file `sudo service ntpd onefetch`
+  * Restrict ZFS RAM to 4G (tune this for your usecase), set `vfs.zfs.arc_max="4G"`
+  in `/boot/loader.conf`
+  * Disable ZFS deduplication on zroot: `sudo zfs set dedup=off zroot`
+  * Set ZFS compression on zroot: `sudo zfs set compression=lz4 zroot`
+
+
+### Kernel build
+  * Create a config file: `cp /usr/src/sys/amd64/conf/GENERIC /usr/src/sys/amd64/conf/ATLANTIS`
+  * Edit the config file to liking...
+  * Build kernel: `cd /usr/src && make buildkernel KERNCONF=ATLANTIS`
+  * Install kernel: `sudo make installkernel KERNCONF=ATLANTIS`
+  * Reboot
+
+## Virtualisation (vm-bhyve)
+  * Install vm-behyve: `sudo portmaster sysutils/vm-bhyve`
+  * Install grub2-behyve: `sudo portmaster sysutils/grub2-bhyve`
+  * Install screen: `sudo portmaster sysutils/screen`
+  * Make directory `sudo mkdir /vm`
+  * Add to rc.conf:
+
+        vm_enable="YES"
+        vm_dir="/vm"
+  * VM init: `sudo vm init`
+  * `cp /usr/local/share/examples/vm-bhyve/* /vm/.templates/`
+  * `vm switch create public`
+  * `vm switch add public igb3`
