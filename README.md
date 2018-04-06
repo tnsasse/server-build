@@ -146,6 +146,60 @@ In the installer:
 Get a cup of coffee, there will be a lot of compiling and waiting in the next
 chapter ;-)
 
+### ZFS Storage Setup
+I will create a RAID-Z pool encrypted with the same key as the root pool. Which of course assumes, that you have set up encryption on the root partition in the installer.
+
+First we need to create a script that partitions the drives, because I am lazy...
+
+        vi /root/partition.sh
+
+with the following content:
+
+        #!/bin/sh
+        for drive in ada2 ada3 ada4 ada5 ada6 ada7; do
+          gpart destroy -F /dev/${drive}
+          gpart create -s gpt /dev/${drive}
+          gpart add -t freebsd-zfs -a 4096 /dev/${drive}
+        done
+
+and execute - **beware your drive will be erased**:
+
+        # chmod u+x partition.sh
+        # ./partition.sh
+
+If the script tells you `"gpart: arg0 'adaN': Invalid agrument"`, dont worry - it means that the destroy doesn't work because there is nothing to destroy (common to empty disks).
+
+Next up, encyrption:
+
+        vi /root/encrypt.sh
+
+with the following content:
+
+        #!/bin/sh
+        for drive in ada2 ada3 ada4 ada5 ada6 ada7; do
+          geli init /dev/${drive}p1
+          geli configure -b /dev/${drive}p1
+          geli attach /dev/${drive}p1
+        done
+
+and go for it, you will have to enter the passphrase many times...
+
+        # chmod u+x encrypt.sh
+        # ./encrypt.sh:
+
+And now `reboot`, cross your fingers that all drives will now be attached encrypted. Next we will create the ZFS pool.
+
+        # zpool create ztank raidz ada2p1.eli ada3p1.eli ada4p1.eli ada5p1.eli ada6p1.eli ada7p1.eli
+        # zpool add ztank cache nvd0
+        # zpool add ztank log nvd1
+
+Create some volumes:
+
+        # zfs create ztank/data
+        # zfs set mountpoint=/data ztank/data
+        # zfs create ztank/vm
+        # zfs set mountpoint=/vm ztank/vm
+
 ## Base configuration
   * Setup networking, add the following to `/etc/rc.conf`
 
